@@ -1,36 +1,23 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MacroMeal
 
-## Getting Started
+Calorie tracking + goal-tailored recipe suggestions. One HTML file, runs anywhere.
 
-First, run the development server:
+🌐 **Live:** https://pebretones.github.io/macromeal/
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Features
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- **Daily calorie target** computed from the Mifflin-St Jeor formula and adjusted for your goal (cut / maintain / bulk)
+- **Local accounts** with PBKDF2 password hashing (120k iterations, SHA-256). Everything stays in your browser; nothing is sent anywhere
+- **Meal log** with optional macro tracking (protein / carbs / fat)
+- **Recipe suggestions** from Spoonacular, filtered to fit the calories you have left today (uses your own free Spoonacular API key, stored locally)
+- **Mobile-friendly** responsive design
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## How it works
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This is a single static `index.html` deployed via GitHub Pages. There is no backend, no database, no analytics. Your data lives in your browser's `localStorage` and never leaves your device. If you want recipes from Spoonacular, you provide your own free API key (https://spoonacular.com/food-api), which is also stored locally.
 
-## Learn More
+Trade-off: accounts are per-device. If you sign up on your phone, you cannot log in from your laptop with that account; you would create a separate one.
 
-To learn more about Next.js, take a look at the following resources:
+## License
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT
