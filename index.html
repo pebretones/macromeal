@@ -517,6 +517,32 @@
   .key-prompt-row { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
   .key-prompt-row .input { flex: 1; min-width: 0; }
 
+  /* Meal name + estimate button */
+  .meal-name-row {
+    display: flex; gap: 8px; align-items: stretch;
+  }
+  .meal-name-row .input { flex: 1; min-width: 0; }
+  .btn-estimate {
+    flex-shrink: 0;
+    padding: 0 14px;
+    border-radius: var(--radius);
+    background: linear-gradient(135deg, rgba(245, 158, 11, .14), rgba(16, 185, 129, .14));
+    border: 1px solid rgba(245, 158, 11, .35);
+    color: var(--ink); font-size: 13px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background .15s, transform .15s, opacity .15s;
+  }
+  .btn-estimate:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(245, 158, 11, .22), rgba(16, 185, 129, .22));
+  }
+  .btn-estimate:disabled { opacity: .55; cursor: not-allowed; }
+  .btn-estimate.loading svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 480px) {
+    .btn-estimate span { display: none; }
+    .btn-estimate { padding: 0 12px; }
+  }
+
   /* Toggle macros button */
   .toggle-macros {
     color: var(--ink-muted); font-size: 13px; font-weight: 500;
@@ -776,19 +802,26 @@
     <div class="card" style="margin-top: 16px;">
       <h2 class="card-title">Log a meal</h2>
       <form id="meal-form">
-        <div class="row-2">
-          <label class="field" style="margin-bottom: 8px;">
-            <span class="field-label">What did you eat?</span>
-            <input class="input" type="text" name="name" placeholder="e.g. Chicken salad" required>
-          </label>
-          <label class="field" style="margin-bottom: 8px;">
-            <span class="field-label">Calories</span>
-            <div class="input-suffix-wrap">
-              <input class="input" type="number" name="calories" min="0" max="10000" placeholder="450" required>
-              <span class="input-suffix">kcal</span>
-            </div>
-          </label>
-        </div>
+        <label class="field" style="margin-bottom: 10px;">
+          <span class="field-label">What did you eat?</span>
+          <div class="meal-name-row">
+            <input class="input" type="text" name="name" placeholder="e.g. Chicken caesar salad" required autocomplete="off">
+            <button type="button" class="btn-estimate" id="btn-estimate" title="Estimate calories from the name">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
+              </svg>
+              <span>Estimate</span>
+            </button>
+          </div>
+          <span class="field-hint" id="estimate-hint">Type a meal name and tap Estimate. Or fill the calories manually below.</span>
+        </label>
+        <label class="field" style="margin-bottom: 8px;">
+          <span class="field-label">Calories</span>
+          <div class="input-suffix-wrap">
+            <input class="input" type="number" name="calories" min="0" max="10000" placeholder="450" required>
+            <span class="input-suffix">kcal</span>
+          </div>
+        </label>
         <div class="macros-extra" id="macros-extra">
           <label class="field" style="margin-bottom: 0;">
             <span class="field-label">Protein</span>
@@ -1179,6 +1212,37 @@ function mapSpoonItem(item) {
   };
 }
 
+async function estimateNutritionFromTitle(title) {
+  const apiKey = store.get(KEYS.spoonacularKey, null);
+  if (!apiKey) {
+    return { ok: false, reason: 'no-key' };
+  }
+  if (!title || title.length < 2) {
+    return { ok: false, reason: 'no-title' };
+  }
+  try {
+    const url = `https://api.spoonacular.com/recipes/guessNutrition?apiKey=${encodeURIComponent(apiKey)}&title=${encodeURIComponent(title)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 402) return { ok: false, reason: 'bad-key' };
+      return { ok: false, reason: 'fetch-error', status: res.status };
+    }
+    const data = await res.json();
+    const calories = Math.round(data.calories?.value ?? 0);
+    if (!calories) return { ok: false, reason: 'no-match' };
+    return {
+      ok: true,
+      calories,
+      protein: Math.round(data.protein?.value ?? 0),
+      carbs:   Math.round(data.carbs?.value ?? 0),
+      fat:     Math.round(data.fat?.value ?? 0),
+    };
+  } catch (err) {
+    console.error('estimate failed:', err);
+    return { ok: false, reason: 'fetch-error' };
+  }
+}
+
 async function fetchRecipesForMeal(meal, goal) {
   const apiKey = store.get(KEYS.spoonacularKey, null);
   const { minCal, maxCal } = adjustRangeForGoal(meal, goal);
@@ -1494,8 +1558,27 @@ async function renderDashboard() {
     });
   }
 
+  // Estimate hint reflects whether the API key is set
+  refreshEstimateHint();
+
   // Recipes
   await renderRecipes(profile);
+}
+
+function refreshEstimateHint() {
+  const hasKey = !!store.get(KEYS.spoonacularKey, null);
+  const hint = $('#estimate-hint');
+  const btn = $('#btn-estimate');
+  if (!hint || !btn) return;
+  if (hasKey) {
+    hint.textContent = 'Type a meal name and tap Estimate. Adjust the calories if needed.';
+    btn.disabled = false;
+    btn.style.opacity = '';
+  } else {
+    hint.textContent = 'Add your Spoonacular key below (in Recipe ideas) to estimate calories from the name.';
+    btn.disabled = true;
+    btn.style.opacity = '.55';
+  }
 }
 
 function recipeCardHtml(r) {
@@ -1565,6 +1648,56 @@ function bindDashboardScreen() {
   $('#toggle-macros').addEventListener('click', () => {
     const open = $('#macros-extra').classList.toggle('open');
     $('#toggle-macros').textContent = open ? '− Hide macros' : '+ Add macros (optional)';
+  });
+
+  // Estimate calories from meal name
+  $('#btn-estimate').addEventListener('click', async () => {
+    const f = $('#meal-form');
+    const title = String(f.elements.name.value || '').trim();
+    if (!title) {
+      toast('Type a meal name first', 'error');
+      f.elements.name.focus();
+      return;
+    }
+    const btn = $('#btn-estimate');
+    const span = btn.querySelector('span');
+    const originalLabel = span.textContent;
+    btn.disabled = true;
+    btn.classList.add('loading');
+    span.textContent = 'Estimating…';
+
+    const result = await estimateNutritionFromTitle(title);
+
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    span.textContent = originalLabel;
+
+    if (!result.ok) {
+      const msgs = {
+        'no-key':      'Add your Spoonacular key (in the Recipes section) to enable auto-estimation.',
+        'no-title':    'Type a meal name first.',
+        'bad-key':     'Spoonacular says your key is invalid. Update it in the Recipes section.',
+        'no-match':    'No estimate found for that. Try a more common name (e.g. "chicken caesar salad").',
+        'fetch-error': 'Could not reach Spoonacular. Check your internet.',
+      };
+      toast(msgs[result.reason] || 'Could not estimate', 'error');
+      if (result.reason === 'no-key') {
+        $('#key-input')?.focus();
+      }
+      return;
+    }
+
+    f.elements.calories.value = result.calories;
+    f.elements.proteinG.value = result.protein || '';
+    f.elements.carbsG.value   = result.carbs   || '';
+    f.elements.fatG.value     = result.fat     || '';
+    if (!$('#macros-extra').classList.contains('open')) {
+      $('#macros-extra').classList.add('open');
+      $('#toggle-macros').textContent = '− Hide macros';
+    }
+    toast('Estimated. Adjust if needed.', 'success');
+    f.elements.calories.focus();
+    f.elements.calories.select();
   });
 
   // Add meal
