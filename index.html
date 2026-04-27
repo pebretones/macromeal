@@ -298,6 +298,42 @@
     box-shadow: var(--shadow-sm);
   }
 
+  /* Allergy chips */
+  .allergy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .allergy-chip {
+    position: relative; cursor: pointer;
+  }
+  .allergy-chip input {
+    position: absolute; opacity: 0; pointer-events: none;
+  }
+  .allergy-chip .chip {
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 9px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-size: 13px; font-weight: 500;
+    transition: all .15s;
+    user-select: none;
+  }
+  .allergy-chip:hover input:not(:checked) ~ .chip { border-color: var(--ink-faint); }
+  .allergy-chip input:checked ~ .chip {
+    background: rgba(239, 68, 68, .12);
+    border-color: var(--red-500);
+    color: var(--red-600);
+  }
+  .allergy-chip input:focus-visible ~ .chip {
+    outline: 2px solid var(--emerald-500); outline-offset: 2px;
+  }
+  @media (prefers-color-scheme: dark) {
+    .allergy-chip input:checked ~ .chip { color: #fca5a5; }
+  }
+
   .seg-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .seg-btn {
     padding: 10px; border: 1px solid var(--border-strong); background: var(--surface);
@@ -766,6 +802,28 @@
               <option value="moderate" selected>Moderately active (3-5 days/week)</option>
               <option value="active">Very active (6-7 days/week)</option>
               <option value="very_active">Athlete (2x/day training)</option>
+            </select>
+          </label>
+
+          <h2 class="card-title" style="margin-top: 18px;">Allergies & diet</h2>
+          <p class="card-subtitle">We filter recipe suggestions to match. Skip anything you don&apos;t need.</p>
+
+          <div class="field">
+            <span class="field-label">Avoid these (tap to toggle)</span>
+            <div class="allergy-grid" id="allergy-grid"></div>
+          </div>
+
+          <label class="field">
+            <span class="field-label">Diet</span>
+            <select class="select" name="diet" id="diet-select">
+              <option value="">No restriction</option>
+              <option value="vegetarian">Vegetarian</option>
+              <option value="vegan">Vegan</option>
+              <option value="gluten free">Gluten-free</option>
+              <option value="ketogenic">Keto</option>
+              <option value="pescetarian">Pescetarian</option>
+              <option value="paleo">Paleo</option>
+              <option value="whole30">Whole30</option>
             </select>
           </label>
 
@@ -1277,40 +1335,82 @@ function deleteEntry(id) {
  * Recipes (Spoonacular + cache + fallback)
  * ============================================================ */
 const MEAL_TYPES = [
-  { id: 'breakfast', label: 'Breakfast', emoji: '🌅', spoonType: 'breakfast', minCal: 220, maxCal: 600 },
-  { id: 'lunch',     label: 'Lunch',     emoji: '🥗', spoonType: 'main course', minCal: 380, maxCal: 800 },
-  { id: 'snack',     label: 'Snacks',    emoji: '🍎', spoonType: 'snack',     minCal: 80,  maxCal: 320 },
-  { id: 'dinner',    label: 'Dinner',    emoji: '🍽️', spoonType: 'main course', minCal: 420, maxCal: 900 },
+  { id: 'breakfast', label: 'Breakfast', emoji: '🌅', spoonType: 'breakfast', minCal: 220, maxCal: 600, offsetPrime: 3 },
+  { id: 'lunch',     label: 'Lunch',     emoji: '🥗', spoonType: 'main course', minCal: 380, maxCal: 800, offsetPrime: 5 },
+  { id: 'snack',     label: 'Snacks',    emoji: '🍎', spoonType: 'snack',     minCal: 80,  maxCal: 320, offsetPrime: 7 },
+  { id: 'dinner',    label: 'Dinner',    emoji: '🍽️', spoonType: 'main course', minCal: 420, maxCal: 900, offsetPrime: 11 },
 ];
+
+const ALLERGENS = [
+  { value: 'dairy',     label: 'Dairy' },
+  { value: 'egg',       label: 'Egg' },
+  { value: 'gluten',    label: 'Gluten' },
+  { value: 'grain',     label: 'Grain' },
+  { value: 'peanut',    label: 'Peanut' },
+  { value: 'seafood',   label: 'Seafood' },
+  { value: 'sesame',    label: 'Sesame' },
+  { value: 'shellfish', label: 'Shellfish' },
+  { value: 'soy',       label: 'Soy' },
+  { value: 'sulfite',   label: 'Sulfite' },
+  { value: 'tree nut',  label: 'Tree nut' },
+  { value: 'wheat',     label: 'Wheat' },
+];
+
+function dayOfYear(d = new Date()) {
+  return Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+}
 
 const FALLBACK_RECIPES_BY_MEAL = {
   breakfast: [
-    { id: 'b1', title: 'Greek yogurt + berries + honey', emoji: '🍯', calories: 320, protein: 22, carbs: 38, fat: 6,  time: 5 },
-    { id: 'b2', title: 'Protein oatmeal + banana',       emoji: '🥣', calories: 420, protein: 30, carbs: 60, fat: 8,  time: 10 },
-    { id: 'b3', title: 'Avocado toast + 2 eggs',         emoji: '🥑', calories: 480, protein: 22, carbs: 32, fat: 28, time: 12 },
+    { id: 'b1', title: 'Greek yogurt + berries + honey',  emoji: '🍯', calories: 320, protein: 22, carbs: 38, fat: 6,  time: 5,  allergens: ['dairy'] },
+    { id: 'b2', title: 'Protein oatmeal + banana',         emoji: '🥣', calories: 420, protein: 30, carbs: 60, fat: 8,  time: 10, allergens: ['gluten', 'grain', 'wheat'] },
+    { id: 'b3', title: 'Avocado toast + 2 eggs',           emoji: '🥑', calories: 480, protein: 22, carbs: 32, fat: 28, time: 12, allergens: ['egg', 'gluten', 'wheat'] },
+    { id: 'b4', title: 'Smoked salmon + cream cheese bagel', emoji: '🥯', calories: 510, protein: 28, carbs: 50, fat: 22, time: 6,  allergens: ['dairy', 'gluten', 'seafood', 'wheat'] },
+    { id: 'b5', title: 'Banana + peanut butter rice cakes', emoji: '🍌', calories: 360, protein: 14, carbs: 52, fat: 12, time: 3,  allergens: ['peanut', 'grain'] },
+    { id: 'b6', title: 'Veggie omelette + fruit',          emoji: '🍳', calories: 380, protein: 26, carbs: 22, fat: 22, time: 12, allergens: ['egg'] },
   ],
   lunch: [
-    { id: 'l1', title: 'Grilled chicken + quinoa bowl',  emoji: '🍗', calories: 580, protein: 45, carbs: 60, fat: 12, time: 25 },
-    { id: 'l2', title: 'Tuna avocado wrap',              emoji: '🌯', calories: 510, protein: 32, carbs: 42, fat: 20, time: 10 },
-    { id: 'l3', title: 'Lentil + roasted veggie bowl',   emoji: '🥘', calories: 520, protein: 24, carbs: 60, fat: 14, time: 35 },
+    { id: 'l1', title: 'Grilled chicken + quinoa bowl',     emoji: '🍗', calories: 580, protein: 45, carbs: 60, fat: 12, time: 25, allergens: [] },
+    { id: 'l2', title: 'Tuna avocado wrap',                 emoji: '🌯', calories: 510, protein: 32, carbs: 42, fat: 20, time: 10, allergens: ['gluten', 'seafood', 'wheat'] },
+    { id: 'l3', title: 'Lentil + roasted veggie bowl',      emoji: '🥘', calories: 520, protein: 24, carbs: 60, fat: 14, time: 35, allergens: [] },
+    { id: 'l4', title: 'Chickpea + feta salad',             emoji: '🥗', calories: 470, protein: 22, carbs: 48, fat: 20, time: 12, allergens: ['dairy'] },
+    { id: 'l5', title: 'Turkey + brown rice + veg',         emoji: '🍱', calories: 560, protein: 42, carbs: 58, fat: 14, time: 20, allergens: ['grain'] },
+    { id: 'l6', title: 'Salmon poké bowl',                  emoji: '🍣', calories: 590, protein: 38, carbs: 55, fat: 22, time: 15, allergens: ['seafood', 'soy', 'grain'] },
   ],
   snack: [
-    { id: 's1', title: 'Cottage cheese + apple slices',  emoji: '🍎', calories: 180, protein: 18, carbs: 22, fat: 3,  time: 3 },
-    { id: 's2', title: 'Hard-boiled eggs + almonds',     emoji: '🥚', calories: 240, protein: 16, carbs: 6,  fat: 18, time: 0 },
-    { id: 's3', title: 'Protein shake + banana',         emoji: '🥤', calories: 260, protein: 28, carbs: 30, fat: 3,  time: 2 },
+    { id: 's1', title: 'Cottage cheese + apple slices',     emoji: '🍎', calories: 180, protein: 18, carbs: 22, fat: 3,  time: 3, allergens: ['dairy'] },
+    { id: 's2', title: 'Hard-boiled eggs + almonds',        emoji: '🥚', calories: 240, protein: 16, carbs: 6,  fat: 18, time: 0, allergens: ['egg', 'tree nut'] },
+    { id: 's3', title: 'Protein shake + banana',            emoji: '🥤', calories: 260, protein: 28, carbs: 30, fat: 3,  time: 2, allergens: ['dairy'] },
+    { id: 's4', title: 'Carrot sticks + hummus',            emoji: '🥕', calories: 160, protein: 6,  carbs: 22, fat: 6,  time: 2, allergens: ['sesame'] },
+    { id: 's5', title: 'Greek yogurt + walnuts',            emoji: '🥛', calories: 220, protein: 14, carbs: 16, fat: 12, time: 1, allergens: ['dairy', 'tree nut'] },
+    { id: 's6', title: 'Apple + 2 squares dark chocolate',  emoji: '🍫', calories: 180, protein: 2,  carbs: 30, fat: 6,  time: 1, allergens: [] },
   ],
   dinner: [
-    { id: 'd1', title: 'Salmon + sweet potato + broccoli', emoji: '🐟', calories: 620, protein: 42, carbs: 48, fat: 24, time: 30 },
-    { id: 'd2', title: 'Beef stir-fry + jasmine rice',     emoji: '🥢', calories: 720, protein: 38, carbs: 80, fat: 20, time: 20 },
-    { id: 'd3', title: 'Roasted chicken + veggie tray',    emoji: '🍽️', calories: 580, protein: 44, carbs: 35, fat: 22, time: 50 },
+    { id: 'd1', title: 'Salmon + sweet potato + broccoli',  emoji: '🐟', calories: 620, protein: 42, carbs: 48, fat: 24, time: 30, allergens: ['seafood'] },
+    { id: 'd2', title: 'Beef stir-fry + jasmine rice',      emoji: '🥢', calories: 720, protein: 38, carbs: 80, fat: 20, time: 20, allergens: ['soy', 'grain'] },
+    { id: 'd3', title: 'Roasted chicken + veggie tray',     emoji: '🍽️', calories: 580, protein: 44, carbs: 35, fat: 22, time: 50, allergens: [] },
+    { id: 'd4', title: 'Turkey meatballs + zucchini noodles', emoji: '🍝', calories: 540, protein: 40, carbs: 28, fat: 26, time: 30, allergens: ['egg'] },
+    { id: 'd5', title: 'Vegetable curry + basmati rice',    emoji: '🍛', calories: 580, protein: 18, carbs: 78, fat: 18, time: 35, allergens: ['grain'] },
+    { id: 'd6', title: 'Pork loin + mashed cauliflower',    emoji: '🥬', calories: 520, protein: 46, carbs: 18, fat: 28, time: 40, allergens: [] },
   ],
 };
 
-function fallbackForMeal(mealId, goal) {
+function fallbackForMeal(mealId, goal, allergies = []) {
   const base = FALLBACK_RECIPES_BY_MEAL[mealId] || [];
   const calMult = goal === 'bulk' ? 1.18 : goal === 'cut' ? 0.82 : 1;
   const proteinBoost = goal === 'bulk' ? 1.12 : goal === 'cut' ? 1.05 : 1;
-  return base.map(r => ({
+  // Filter out recipes containing user's allergens
+  const filtered = allergies.length
+    ? base.filter(r => !(r.allergens || []).some(a => allergies.includes(a)))
+    : base;
+  // Daily rotation: shift the start index so different days show different recipes
+  const list = filtered.length ? filtered : base; // fall back to unfiltered if all filtered out
+  const start = dayOfYear() * (mealId === 'breakfast' ? 3 : mealId === 'lunch' ? 5 : mealId === 'snack' ? 7 : 11) % list.length;
+  const rotated = [];
+  for (let i = 0; i < Math.min(3, list.length); i++) {
+    rotated.push(list[(start + i) % list.length]);
+  }
+  return rotated.map(r => ({
     ...r,
     image: null,
     sourceUrl: null,
@@ -1471,16 +1571,22 @@ async function estimateNutritionFromTitle(title) {
   }
 }
 
-async function fetchRecipesForMeal(meal, goal) {
+async function fetchRecipesForMeal(meal, profile) {
   const apiKey = store.get(KEYS.spoonacularKey, null);
+  const goal = profile.goal;
+  const allergies = (profile.allergies || []).slice().sort();
+  const diet = profile.diet || '';
   const { minCal, maxCal } = adjustRangeForGoal(meal, goal);
-  const cacheKey = `v2:${goal}:${meal.id}:${minCal}-${maxCal}`;
+
+  const today = todayKey();
+  const offset = (dayOfYear() * meal.offsetPrime) % 30;
+  const cacheKey = `v3:${today}:${goal}:${meal.id}:${minCal}-${maxCal}:${diet}:${allergies.join(',')}:${offset}`;
   const cache = store.get(KEYS.recipeCache, {});
   const cached = cache[cacheKey];
   const TTL = 24 * 60 * 60 * 1000;
 
   if (!apiKey) {
-    return { recipes: fallbackForMeal(meal.id, goal), source: 'fallback' };
+    return { recipes: fallbackForMeal(meal.id, goal, allergies), source: 'fallback' };
   }
   if (cached && Date.now() - cached.fetchedAt < TTL) {
     return { recipes: cached.recipes, source: 'cache' };
@@ -1493,6 +1599,7 @@ async function fetchRecipesForMeal(meal, goal) {
   const params = new URLSearchParams({
     apiKey,
     number: '3',
+    offset: String(offset),
     type: meal.spoonType,
     minCalories: String(minCal),
     maxCalories: String(maxCal),
@@ -1500,6 +1607,8 @@ async function fetchRecipesForMeal(meal, goal) {
     instructionsRequired: 'true',
   });
   for (const [k, v] of Object.entries(goalParams)) params.set(k, String(v));
+  if (allergies.length) params.set('intolerances', allergies.join(','));
+  if (diet) params.set('diet', diet);
 
   const url = `https://api.spoonacular.com/recipes/complexSearch?${params}`;
 
@@ -1512,7 +1621,7 @@ async function fetchRecipesForMeal(meal, goal) {
     const data = await res.json();
     const recipes = (data.results || []).map(mapSpoonItem);
     if (recipes.length === 0) {
-      return { recipes: fallbackForMeal(meal.id, goal), source: 'fallback' };
+      return { recipes: fallbackForMeal(meal.id, goal, allergies), source: 'fallback' };
     }
     cache[cacheKey] = { recipes, fetchedAt: Date.now() };
     store.set(KEYS.recipeCache, cache);
@@ -1520,7 +1629,7 @@ async function fetchRecipesForMeal(meal, goal) {
   } catch (err) {
     console.error(`Spoonacular fetch failed for ${meal.id}:`, err);
     if (cached) return { recipes: cached.recipes, source: 'cache' };
-    return { recipes: fallbackForMeal(meal.id, goal), source: 'fallback' };
+    return { recipes: fallbackForMeal(meal.id, goal, allergies), source: 'fallback' };
   }
 }
 
@@ -1622,6 +1731,18 @@ function refreshAuthCopy() {
 /* ============================================================
  * Render: Profile screen
  * ============================================================ */
+function renderAllergyChips(selected = []) {
+  const grid = $('#allergy-grid');
+  if (!grid) return;
+  const set = new Set(selected);
+  grid.innerHTML = ALLERGENS.map(a => `
+    <label class="allergy-chip">
+      <input type="checkbox" name="allergies" value="${escapeHtml(a.value)}"${set.has(a.value) ? ' checked' : ''}>
+      <span class="chip">${escapeHtml(a.label)}</span>
+    </label>
+  `).join('');
+}
+
 function renderProfile() {
   const p = getProfile();
   const f = $('#profile-form');
@@ -1637,6 +1758,9 @@ function renderProfile() {
   const goal = p?.goal ?? 'maintain';
   $('#input-goal').value = goal;
   $$('#goal-options .goal-option').forEach(b => b.classList.toggle('selected', b.dataset.goal === goal));
+
+  renderAllergyChips(p?.allergies || []);
+  $('#diet-select').value = p?.diet || '';
 }
 
 function bindProfileScreen() {
@@ -1658,6 +1782,7 @@ function bindProfileScreen() {
   $('#profile-form').addEventListener('submit', (ev) => {
     ev.preventDefault();
     const fd = new FormData(ev.currentTarget);
+    const allergies = fd.getAll('allergies').map(String);
     const profile = {
       sex: String(fd.get('sex')),
       ageYears: Number(fd.get('ageYears')),
@@ -1665,6 +1790,8 @@ function bindProfileScreen() {
       weightKg: Number(fd.get('weightKg')),
       activityLevel: String(fd.get('activityLevel')),
       goal: String(fd.get('goal')),
+      allergies,
+      diet: String(fd.get('diet') || ''),
     };
     if (!profile.ageYears || !profile.heightCm || !profile.weightKg) {
       toast('Fill in your age, height and weight', 'error');
@@ -1672,6 +1799,8 @@ function bindProfileScreen() {
     }
     profile.dailyCalorieTarget = dailyTarget(profile);
     saveProfile(profile);
+    // Clear recipe cache so the next dashboard fetch picks up new allergies/diet
+    store.del(KEYS.recipeCache);
     toast('Profile saved', 'success');
     renderDashboard();
     showScreen('dashboard');
@@ -1869,7 +1998,7 @@ async function renderRecipes(profile) {
 
   // Fetch all 4 in parallel
   const results = await Promise.all(
-    MEAL_TYPES.map(meal => fetchRecipesForMeal(meal, goal))
+    MEAL_TYPES.map(meal => fetchRecipesForMeal(meal, profile))
   );
 
   let anyLive = false;
