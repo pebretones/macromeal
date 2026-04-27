@@ -1813,7 +1813,6 @@ function refreshEstimateHint() {
     'Add your Spoonacular key below (in Recipe ideas) to compute calories per gram.',
   );
   // Photo button: only enable if we have a key AND a file is selected
-  const hasKey = !!store.get(KEYS.spoonacularKey, null);
   const hasFile = !!$('#photo-input')?.files?.[0];
   const photoBtn = $('#btn-analyze-photo');
   if (photoBtn) photoBtn.disabled = !hasKey || !hasFile;
