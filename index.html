@@ -535,6 +535,39 @@
   }
   .mode-pane[hidden] { display: none; }
 
+  /* Multi-ingredient rows in By gram mode */
+  .gram-row {
+    display: grid;
+    grid-template-columns: 1fr 110px 36px;
+    gap: 8px;
+    align-items: end;
+    margin-bottom: 10px;
+  }
+  .gram-row .field { margin: 0; }
+  .gram-row-remove {
+    width: 36px; height: 38px;
+    border-radius: var(--radius);
+    color: var(--ink-faint);
+    transition: background .15s, color .15s;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 20px; line-height: 1;
+  }
+  .gram-row-remove:hover { background: rgba(239, 68, 68, .1); color: var(--red-600); }
+  .gram-row.alone .gram-row-remove { visibility: hidden; }
+  .gram-actions {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 8px; margin-top: 4px;
+  }
+  .btn-link {
+    color: var(--ink-muted); font-size: 13px; font-weight: 500;
+    padding: 4px 0;
+  }
+  .btn-link:hover { color: var(--emerald-700); }
+  @media (prefers-color-scheme: dark) { .btn-link:hover { color: #6ee7b7; } }
+  @media (max-width: 480px) {
+    .gram-row { grid-template-columns: 1fr 90px 32px; gap: 6px; }
+  }
+
   /* Meal name + estimate button */
   .meal-name-row {
     display: flex; gap: 8px; align-items: stretch;
@@ -842,26 +875,17 @@
         </div>
 
         <div class="mode-pane" data-mode-pane="gram" hidden>
-          <label class="field" style="margin-bottom: 10px;">
-            <span class="field-label">Ingredient</span>
-            <div class="meal-name-row">
-              <input class="input" type="text" id="gram-name" placeholder="e.g. chicken breast, olive oil, almonds" autocomplete="off">
-              <button type="button" class="btn-estimate" id="btn-calc-gram" title="Compute calories for this exact amount">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
-                </svg>
-                <span>Calculate</span>
-              </button>
-            </div>
-          </label>
-          <label class="field" style="margin-bottom: 10px;">
-            <span class="field-label">Amount</span>
-            <div class="input-suffix-wrap">
-              <input class="input" type="number" id="gram-amount" min="1" max="5000" step="1" placeholder="150">
-              <span class="input-suffix">g</span>
-            </div>
-            <span class="field-hint" id="gram-hint">Type a single ingredient and the weight, then tap Calculate. Calories will be exact for that amount.</span>
-          </label>
+          <div id="gram-rows"></div>
+          <div class="gram-actions">
+            <button type="button" class="btn-link" id="gram-add-row">+ Add another ingredient</button>
+            <button type="button" class="btn-estimate" id="btn-calc-gram" title="Compute calories for the whole list">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
+              </svg>
+              <span>Calculate</span>
+            </button>
+          </div>
+          <span class="field-hint" id="gram-hint">One ingredient per row. Add more with "+ Add another ingredient", then tap Calculate.</span>
         </div>
 
         <label class="field" style="margin-bottom: 8px;">
@@ -1261,13 +1285,16 @@ function mapSpoonItem(item) {
   };
 }
 
-async function parseIngredientByWeight(ingredient, grams) {
+async function parseIngredientList(rows) {
   const apiKey = store.get(KEYS.spoonacularKey, null);
   if (!apiKey) return { ok: false, reason: 'no-key' };
-  if (!ingredient || !grams) return { ok: false, reason: 'no-input' };
+  const cleaned = rows.filter(r => r.name && r.amount > 0);
+  if (!cleaned.length) return { ok: false, reason: 'no-input' };
+
+  const ingredientList = cleaned.map(r => `${r.amount}g ${r.name}`).join('\n');
 
   const body = new URLSearchParams();
-  body.append('ingredientList', `${grams}g ${ingredient}`);
+  body.append('ingredientList', ingredientList);
   body.append('servings', '1');
   body.append('includeNutrition', 'true');
 
@@ -1284,21 +1311,38 @@ async function parseIngredientByWeight(ingredient, grams) {
     }
     const data = await res.json();
     if (!Array.isArray(data) || !data.length) return { ok: false, reason: 'no-match' };
-    const item = data[0];
-    const nuts = item.nutrition?.nutrients || [];
-    const find = (n) => Math.round(nuts.find(x => x.name?.toLowerCase() === n.toLowerCase())?.amount ?? 0);
-    const calories = find('Calories');
-    if (!calories) return { ok: false, reason: 'no-match' };
+
+    let totals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+    const labels = [];
+    const unmatched = [];
+    for (let i = 0; i < data.length; i++) {
+      const item = data[i];
+      const nuts = item.nutrition?.nutrients || [];
+      const findRaw = (n) => nuts.find(x => x.name?.toLowerCase() === n.toLowerCase())?.amount ?? 0;
+      const cal = findRaw('Calories');
+      if (!cal) {
+        unmatched.push(cleaned[i]?.name ?? item.name ?? 'unknown');
+        continue;
+      }
+      totals.calories += cal;
+      totals.protein  += findRaw('Protein');
+      totals.carbs    += findRaw('Carbohydrates');
+      totals.fat      += findRaw('Fat');
+      const orig = item.original || `${item.amount}g ${item.name}`;
+      labels.push(orig);
+    }
+    if (!totals.calories) return { ok: false, reason: 'no-match', unmatched };
     return {
       ok: true,
-      calories,
-      protein: find('Protein'),
-      carbs:   find('Carbohydrates'),
-      fat:     find('Fat'),
-      label:   item.original || `${grams}g ${ingredient}`,
+      calories: Math.round(totals.calories),
+      protein:  Math.round(totals.protein),
+      carbs:    Math.round(totals.carbs),
+      fat:      Math.round(totals.fat),
+      label:    labels.join(' + '),
+      unmatched,
     };
   } catch (err) {
-    console.error('parseIngredient failed:', err);
+    console.error('parseIngredientList failed:', err);
     return { ok: false, reason: 'fetch-error' };
   }
 }
@@ -1672,7 +1716,7 @@ function refreshEstimateHint() {
   );
   setBtn(
     '#btn-calc-gram', '#gram-hint',
-    'Type a single ingredient and the weight, then tap Calculate. Calories will be exact for that amount.',
+    'One ingredient per row. Add more with "+ Add another ingredient", then tap Calculate.',
     'Add your Spoonacular key below (in Recipe ideas) to compute calories per gram.',
   );
 }
@@ -1743,6 +1787,52 @@ function getMealMode() {
   return $('.mode-tab.active')?.dataset.mode || 'dish';
 }
 
+function buildGramRow(name = '', amount = '') {
+  const row = document.createElement('div');
+  row.className = 'gram-row';
+  row.innerHTML = `
+    <label class="field">
+      <span class="field-label">Ingredient</span>
+      <input class="input gram-name" type="text" placeholder="e.g. chicken breast" autocomplete="off" value="${escapeHtml(name)}">
+    </label>
+    <label class="field">
+      <span class="field-label">Amount</span>
+      <div class="input-suffix-wrap">
+        <input class="input gram-amount" type="number" min="1" max="5000" step="1" placeholder="150" value="${escapeHtml(String(amount))}">
+        <span class="input-suffix">g</span>
+      </div>
+    </label>
+    <button type="button" class="gram-row-remove" aria-label="Remove ingredient">&times;</button>
+  `;
+  row.querySelector('.gram-row-remove').addEventListener('click', () => {
+    const rows = $$('#gram-rows .gram-row');
+    if (rows.length > 1) {
+      row.remove();
+      updateGramRowsState();
+    }
+  });
+  return row;
+}
+
+function updateGramRowsState() {
+  const rows = $$('#gram-rows .gram-row');
+  rows.forEach(r => r.classList.toggle('alone', rows.length === 1));
+}
+
+function getIngredientRows() {
+  return $$('#gram-rows .gram-row').map(row => ({
+    name: row.querySelector('.gram-name').value.trim(),
+    amount: Number(row.querySelector('.gram-amount').value),
+  }));
+}
+
+function resetGramRows() {
+  const container = $('#gram-rows');
+  container.innerHTML = '';
+  container.appendChild(buildGramRow());
+  updateGramRowsState();
+}
+
 function bindDashboardScreen() {
   // Toggle macros section
   $('#toggle-macros').addEventListener('click', () => {
@@ -1768,18 +1858,26 @@ function bindDashboardScreen() {
     });
   });
 
-  // Calculate calories for a specific ingredient + grams
+  // Add another ingredient row
+  $('#gram-add-row').addEventListener('click', () => {
+    const row = buildGramRow();
+    $('#gram-rows').appendChild(row);
+    updateGramRowsState();
+    row.querySelector('.gram-name').focus();
+  });
+
+  // Calculate calories for the whole ingredient list
   $('#btn-calc-gram').addEventListener('click', async () => {
-    const ingredient = $('#gram-name').value.trim();
-    const grams = Number($('#gram-amount').value);
-    if (!ingredient) {
-      toast('Type the ingredient first', 'error');
-      $('#gram-name').focus();
+    const rows = getIngredientRows();
+    const filled = rows.filter(r => r.name);
+    if (!filled.length) {
+      toast('Add at least one ingredient', 'error');
+      $('#gram-rows .gram-name')?.focus();
       return;
     }
-    if (!grams || grams <= 0) {
-      toast('Enter a weight in grams', 'error');
-      $('#gram-amount').focus();
+    const missingAmount = filled.find(r => !r.amount || r.amount <= 0);
+    if (missingAmount) {
+      toast(`Enter a weight in grams for "${missingAmount.name}"`, 'error');
       return;
     }
     const btn = $('#btn-calc-gram');
@@ -1787,16 +1885,16 @@ function bindDashboardScreen() {
     const originalLabel = span.textContent;
     btn.disabled = true; btn.classList.add('loading'); span.textContent = 'Calculating…';
 
-    const result = await parseIngredientByWeight(ingredient, grams);
+    const result = await parseIngredientList(filled);
 
     btn.disabled = false; btn.classList.remove('loading'); span.textContent = originalLabel;
 
     if (!result.ok) {
       const msgs = {
         'no-key':      'Add your Spoonacular key (in the Recipes section) to enable per-gram calculation.',
-        'no-input':    'Fill the ingredient and amount.',
+        'no-input':    'Fill at least one ingredient and amount.',
         'bad-key':     'Spoonacular says your key is invalid. Update it in the Recipes section.',
-        'no-match':    'Could not match that ingredient. Try a more common name (e.g. "olive oil", "chicken breast", "rice").',
+        'no-match':    'Could not match those ingredients. Try more common names (e.g. "olive oil", "chicken breast", "rice").',
         'fetch-error': 'Could not reach Spoonacular. Check your internet.',
       };
       toast(msgs[result.reason] || 'Could not calculate', 'error');
@@ -1813,7 +1911,11 @@ function bindDashboardScreen() {
       $('#macros-extra').classList.add('open');
       $('#toggle-macros').textContent = '− Hide macros';
     }
-    toast(`${result.calories} kcal for ${grams}g`, 'success');
+    if (result.unmatched?.length) {
+      toast(`${result.calories} kcal — could not match: ${result.unmatched.join(', ')}`, 'error');
+    } else {
+      toast(`${result.calories} kcal for ${filled.length} ingredient${filled.length > 1 ? 's' : ''}`, 'success');
+    }
   });
 
   // Estimate calories from meal name
@@ -1874,11 +1976,11 @@ function bindDashboardScreen() {
 
     let name;
     if (mode === 'gram') {
-      const ingredient = $('#gram-name').value.trim();
-      const grams = Number($('#gram-amount').value);
-      if (!ingredient) { toast('Type the ingredient', 'error'); $('#gram-name').focus(); return; }
-      if (!grams || grams <= 0) { toast('Enter a weight in grams', 'error'); $('#gram-amount').focus(); return; }
-      name = `${grams}g ${ingredient}`;
+      const filled = getIngredientRows().filter(r => r.name);
+      if (!filled.length) { toast('Add at least one ingredient', 'error'); return; }
+      const missingAmount = filled.find(r => !r.amount || r.amount <= 0);
+      if (missingAmount) { toast(`Enter a weight in grams for "${missingAmount.name}"`, 'error'); return; }
+      name = filled.map(r => `${r.amount}g ${r.name}`).join(' + ');
     } else {
       name = String(fd.get('name') || '').trim();
     }
@@ -1895,8 +1997,7 @@ function bindDashboardScreen() {
       fatG: Number(fd.get('fatG')) || null,
     });
     ev.currentTarget.reset();
-    $('#gram-name').value = '';
-    $('#gram-amount').value = '';
+    resetGramRows();
     $('#macros-extra').classList.remove('open');
     $('#toggle-macros').textContent = '+ Add macros (optional)';
     toast('Meal added', 'success');
@@ -1936,6 +2037,7 @@ function init() {
   bindProfileScreen();
   bindDashboardScreen();
   renderNav();
+  resetGramRows();
 
   $('#brand-link').addEventListener('click', (ev) => {
     ev.preventDefault();
