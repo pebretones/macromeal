@@ -517,6 +517,24 @@
   .key-prompt-row { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
   .key-prompt-row .input { flex: 1; min-width: 0; }
 
+  /* Meal mode tabs */
+  .mode-tabs {
+    display: flex; gap: 4px; padding: 4px;
+    background: var(--surface-2); border-radius: 999px;
+    margin: 0 0 14px;
+    width: fit-content;
+  }
+  .mode-tab {
+    padding: 7px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 500; color: var(--ink-muted);
+    transition: background .15s, color .15s;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .mode-tab.active {
+    background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm);
+  }
+  .mode-pane[hidden] { display: none; }
+
   /* Meal name + estimate button */
   .meal-name-row {
     display: flex; gap: 8px; align-items: stretch;
@@ -802,19 +820,50 @@
     <div class="card" style="margin-top: 16px;">
       <h2 class="card-title">Log a meal</h2>
       <form id="meal-form">
-        <label class="field" style="margin-bottom: 10px;">
-          <span class="field-label">What did you eat?</span>
-          <div class="meal-name-row">
-            <input class="input" type="text" name="name" placeholder="e.g. Chicken caesar salad" required autocomplete="off">
-            <button type="button" class="btn-estimate" id="btn-estimate" title="Estimate calories from the name">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
-              </svg>
-              <span>Estimate</span>
-            </button>
-          </div>
-          <span class="field-hint" id="estimate-hint">Type a meal name and tap Estimate. Or fill the calories manually below.</span>
-        </label>
+        <div class="mode-tabs" role="tablist">
+          <button type="button" class="mode-tab active" data-mode="dish" role="tab" aria-selected="true">🍽️ Whole dish</button>
+          <button type="button" class="mode-tab" data-mode="gram" role="tab" aria-selected="false">⚖️ By gram</button>
+        </div>
+
+        <div class="mode-pane" data-mode-pane="dish">
+          <label class="field" style="margin-bottom: 10px;">
+            <span class="field-label">What did you eat?</span>
+            <div class="meal-name-row">
+              <input class="input" type="text" name="name" placeholder="e.g. Chicken caesar salad" autocomplete="off">
+              <button type="button" class="btn-estimate" id="btn-estimate" title="Estimate calories from the name">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
+                </svg>
+                <span>Estimate</span>
+              </button>
+            </div>
+            <span class="field-hint" id="estimate-hint">Type a meal name and tap Estimate. Or fill the calories manually below.</span>
+          </label>
+        </div>
+
+        <div class="mode-pane" data-mode-pane="gram" hidden>
+          <label class="field" style="margin-bottom: 10px;">
+            <span class="field-label">Ingredient</span>
+            <div class="meal-name-row">
+              <input class="input" type="text" id="gram-name" placeholder="e.g. chicken breast, olive oil, almonds" autocomplete="off">
+              <button type="button" class="btn-estimate" id="btn-calc-gram" title="Compute calories for this exact amount">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
+                </svg>
+                <span>Calculate</span>
+              </button>
+            </div>
+          </label>
+          <label class="field" style="margin-bottom: 10px;">
+            <span class="field-label">Amount</span>
+            <div class="input-suffix-wrap">
+              <input class="input" type="number" id="gram-amount" min="1" max="5000" step="1" placeholder="150">
+              <span class="input-suffix">g</span>
+            </div>
+            <span class="field-hint" id="gram-hint">Type a single ingredient and the weight, then tap Calculate. Calories will be exact for that amount.</span>
+          </label>
+        </div>
+
         <label class="field" style="margin-bottom: 8px;">
           <span class="field-label">Calories</span>
           <div class="input-suffix-wrap">
@@ -1212,6 +1261,48 @@ function mapSpoonItem(item) {
   };
 }
 
+async function parseIngredientByWeight(ingredient, grams) {
+  const apiKey = store.get(KEYS.spoonacularKey, null);
+  if (!apiKey) return { ok: false, reason: 'no-key' };
+  if (!ingredient || !grams) return { ok: false, reason: 'no-input' };
+
+  const body = new URLSearchParams();
+  body.append('ingredientList', `${grams}g ${ingredient}`);
+  body.append('servings', '1');
+  body.append('includeNutrition', 'true');
+
+  try {
+    const url = `https://api.spoonacular.com/recipes/parseIngredients?apiKey=${encodeURIComponent(apiKey)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 402) return { ok: false, reason: 'bad-key' };
+      return { ok: false, reason: 'fetch-error', status: res.status };
+    }
+    const data = await res.json();
+    if (!Array.isArray(data) || !data.length) return { ok: false, reason: 'no-match' };
+    const item = data[0];
+    const nuts = item.nutrition?.nutrients || [];
+    const find = (n) => Math.round(nuts.find(x => x.name?.toLowerCase() === n.toLowerCase())?.amount ?? 0);
+    const calories = find('Calories');
+    if (!calories) return { ok: false, reason: 'no-match' };
+    return {
+      ok: true,
+      calories,
+      protein: find('Protein'),
+      carbs:   find('Carbohydrates'),
+      fat:     find('Fat'),
+      label:   item.original || `${grams}g ${ingredient}`,
+    };
+  } catch (err) {
+    console.error('parseIngredient failed:', err);
+    return { ok: false, reason: 'fetch-error' };
+  }
+}
+
 async function estimateNutritionFromTitle(title) {
   const apiKey = store.get(KEYS.spoonacularKey, null);
   if (!apiKey) {
@@ -1567,18 +1658,23 @@ async function renderDashboard() {
 
 function refreshEstimateHint() {
   const hasKey = !!store.get(KEYS.spoonacularKey, null);
-  const hint = $('#estimate-hint');
-  const btn = $('#btn-estimate');
-  if (!hint || !btn) return;
-  if (hasKey) {
-    hint.textContent = 'Type a meal name and tap Estimate. Adjust the calories if needed.';
-    btn.disabled = false;
-    btn.style.opacity = '';
-  } else {
-    hint.textContent = 'Add your Spoonacular key below (in Recipe ideas) to estimate calories from the name.';
-    btn.disabled = true;
-    btn.style.opacity = '.55';
-  }
+  const setBtn = (id, hintId, hintWith, hintWithout) => {
+    const btn = $(id), hint = $(hintId);
+    if (!btn) return;
+    btn.disabled = !hasKey;
+    btn.style.opacity = hasKey ? '' : '.55';
+    if (hint) hint.textContent = hasKey ? hintWith : hintWithout;
+  };
+  setBtn(
+    '#btn-estimate', '#estimate-hint',
+    'Type a meal name and tap Estimate. Adjust the calories if needed.',
+    'Add your Spoonacular key below (in Recipe ideas) to estimate calories from the name.',
+  );
+  setBtn(
+    '#btn-calc-gram', '#gram-hint',
+    'Type a single ingredient and the weight, then tap Calculate. Calories will be exact for that amount.',
+    'Add your Spoonacular key below (in Recipe ideas) to compute calories per gram.',
+  );
 }
 
 function recipeCardHtml(r) {
@@ -1643,11 +1739,81 @@ async function renderRecipes(profile) {
     : 'Sample suggestions. Add your free Spoonacular key below for live, personalised recipes.';
 }
 
+function getMealMode() {
+  return $('.mode-tab.active')?.dataset.mode || 'dish';
+}
+
 function bindDashboardScreen() {
   // Toggle macros section
   $('#toggle-macros').addEventListener('click', () => {
     const open = $('#macros-extra').classList.toggle('open');
     $('#toggle-macros').textContent = open ? '− Hide macros' : '+ Add macros (optional)';
+  });
+
+  // Mode tabs (Whole dish | By gram)
+  $$('.mode-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const mode = tab.dataset.mode;
+      $$('.mode-tab').forEach(t => {
+        const active = t === tab;
+        t.classList.toggle('active', active);
+        t.setAttribute('aria-selected', String(active));
+      });
+      $$('.mode-pane').forEach(p => {
+        p.hidden = p.dataset.modePane !== mode;
+      });
+      // Only the visible name input is required
+      const dishName = document.querySelector('input[name="name"]');
+      if (dishName) dishName.required = (mode === 'dish');
+    });
+  });
+
+  // Calculate calories for a specific ingredient + grams
+  $('#btn-calc-gram').addEventListener('click', async () => {
+    const ingredient = $('#gram-name').value.trim();
+    const grams = Number($('#gram-amount').value);
+    if (!ingredient) {
+      toast('Type the ingredient first', 'error');
+      $('#gram-name').focus();
+      return;
+    }
+    if (!grams || grams <= 0) {
+      toast('Enter a weight in grams', 'error');
+      $('#gram-amount').focus();
+      return;
+    }
+    const btn = $('#btn-calc-gram');
+    const span = btn.querySelector('span');
+    const originalLabel = span.textContent;
+    btn.disabled = true; btn.classList.add('loading'); span.textContent = 'Calculating…';
+
+    const result = await parseIngredientByWeight(ingredient, grams);
+
+    btn.disabled = false; btn.classList.remove('loading'); span.textContent = originalLabel;
+
+    if (!result.ok) {
+      const msgs = {
+        'no-key':      'Add your Spoonacular key (in the Recipes section) to enable per-gram calculation.',
+        'no-input':    'Fill the ingredient and amount.',
+        'bad-key':     'Spoonacular says your key is invalid. Update it in the Recipes section.',
+        'no-match':    'Could not match that ingredient. Try a more common name (e.g. "olive oil", "chicken breast", "rice").',
+        'fetch-error': 'Could not reach Spoonacular. Check your internet.',
+      };
+      toast(msgs[result.reason] || 'Could not calculate', 'error');
+      if (result.reason === 'no-key') $('#key-input')?.focus();
+      return;
+    }
+
+    const f = $('#meal-form');
+    f.elements.calories.value = result.calories;
+    f.elements.proteinG.value = result.protein || '';
+    f.elements.carbsG.value   = result.carbs   || '';
+    f.elements.fatG.value     = result.fat     || '';
+    if (!$('#macros-extra').classList.contains('open')) {
+      $('#macros-extra').classList.add('open');
+      $('#toggle-macros').textContent = '− Hide macros';
+    }
+    toast(`${result.calories} kcal for ${grams}g`, 'success');
   });
 
   // Estimate calories from meal name
@@ -1704,12 +1870,23 @@ function bindDashboardScreen() {
   $('#meal-form').addEventListener('submit', (ev) => {
     ev.preventDefault();
     const fd = new FormData(ev.currentTarget);
-    const name = String(fd.get('name') || '').trim();
-    const calories = Number(fd.get('calories'));
-    if (!name || !calories || calories < 0) {
-      toast('Add a name and calories', 'error');
-      return;
+    const mode = getMealMode();
+
+    let name;
+    if (mode === 'gram') {
+      const ingredient = $('#gram-name').value.trim();
+      const grams = Number($('#gram-amount').value);
+      if (!ingredient) { toast('Type the ingredient', 'error'); $('#gram-name').focus(); return; }
+      if (!grams || grams <= 0) { toast('Enter a weight in grams', 'error'); $('#gram-amount').focus(); return; }
+      name = `${grams}g ${ingredient}`;
+    } else {
+      name = String(fd.get('name') || '').trim();
     }
+
+    const calories = Number(fd.get('calories'));
+    if (!name) { toast('Add what you ate', 'error'); return; }
+    if (!calories || calories < 0) { toast('Add the calories (or use Estimate / Calculate)', 'error'); return; }
+
     addEntry({
       name,
       calories: Math.round(calories),
@@ -1718,6 +1895,8 @@ function bindDashboardScreen() {
       fatG: Number(fd.get('fatG')) || null,
     });
     ev.currentTarget.reset();
+    $('#gram-name').value = '';
+    $('#gram-amount').value = '';
     $('#macros-extra').classList.remove('open');
     $('#toggle-macros').textContent = '+ Add macros (optional)';
     toast('Meal added', 'success');
