@@ -535,6 +535,34 @@
   }
   .mode-pane[hidden] { display: none; }
 
+  /* Photo mode */
+  .photo-controls {
+    display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap;
+  }
+  .photo-controls .btn { gap: 6px; }
+  #photo-preview-wrap {
+    margin-top: 12px; position: relative; display: inline-block; max-width: 100%;
+  }
+  #photo-preview {
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    display: block;
+    box-shadow: var(--shadow-sm);
+  }
+  #photo-clear {
+    position: absolute; top: 8px; right: 8px;
+    width: 30px; height: 30px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, .65); color: white;
+    font-size: 18px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(4px);
+    transition: background .15s;
+  }
+  #photo-clear:hover { background: rgba(220, 38, 38, .85); }
+
   /* Multi-ingredient rows in By gram mode */
   .gram-row {
     display: grid;
@@ -856,6 +884,7 @@
         <div class="mode-tabs" role="tablist">
           <button type="button" class="mode-tab active" data-mode="dish" role="tab" aria-selected="true">🍽️ Whole dish</button>
           <button type="button" class="mode-tab" data-mode="gram" role="tab" aria-selected="false">⚖️ By gram</button>
+          <button type="button" class="mode-tab" data-mode="photo" role="tab" aria-selected="false">📷 By photo</button>
         </div>
 
         <div class="mode-pane" data-mode-pane="dish">
@@ -871,6 +900,37 @@
               </button>
             </div>
             <span class="field-hint" id="estimate-hint">Type a meal name and tap Estimate. Or fill the calories manually below.</span>
+          </label>
+        </div>
+
+        <div class="mode-pane" data-mode-pane="photo" hidden>
+          <label class="field" style="margin-bottom: 10px;">
+            <span class="field-label">Photo of your meal</span>
+            <input type="file" id="photo-input" accept="image/*" hidden>
+            <div class="photo-controls">
+              <button type="button" class="btn btn-ghost btn-sm" id="photo-pick">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                  <circle cx="12" cy="13" r="4"/>
+                </svg>
+                <span id="photo-pick-label">Take or pick a photo</span>
+              </button>
+              <button type="button" class="btn-estimate" id="btn-analyze-photo" disabled title="Identify the meal and estimate calories">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
+                </svg>
+                <span>Analyze</span>
+              </button>
+            </div>
+            <div id="photo-preview-wrap" hidden>
+              <img id="photo-preview" alt="Selected meal" />
+              <button type="button" id="photo-clear" aria-label="Remove photo">&times;</button>
+            </div>
+          </label>
+          <label class="field" style="margin-bottom: 10px;">
+            <span class="field-label">What is it?</span>
+            <input class="input" type="text" id="photo-name" placeholder="Auto-detected after Analyze" autocomplete="off">
+            <span class="field-hint" id="photo-hint">Take a photo, tap Analyze. Spoonacular guesses the dish + estimates calories. Best on classic dishes; can be off on French specialities.</span>
           </label>
         </div>
 
@@ -1283,6 +1343,39 @@ function mapSpoonItem(item) {
     time: item.readyInMinutes ?? null,
     sourceUrl: item.sourceUrl || null,
   };
+}
+
+async function analyzePhotoFile(file) {
+  const apiKey = store.get(KEYS.spoonacularKey, null);
+  if (!apiKey) return { ok: false, reason: 'no-key' };
+  if (!file) return { ok: false, reason: 'no-input' };
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const url = `https://api.spoonacular.com/food/images/analyze?apiKey=${encodeURIComponent(apiKey)}`;
+    const res = await fetch(url, { method: 'POST', body: formData });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 402) return { ok: false, reason: 'bad-key' };
+      return { ok: false, reason: 'fetch-error', status: res.status };
+    }
+    const data = await res.json();
+    const calories = Math.round(data.nutrition?.calories?.value ?? 0);
+    if (!calories) return { ok: false, reason: 'no-match', category: data.category?.name };
+    return {
+      ok: true,
+      calories,
+      protein:  Math.round(data.nutrition?.protein?.value ?? 0),
+      carbs:    Math.round(data.nutrition?.carbs?.value ?? 0),
+      fat:      Math.round(data.nutrition?.fat?.value ?? 0),
+      category: data.category?.name || 'meal',
+      probability: data.category?.probability ?? 0,
+    };
+  } catch (err) {
+    console.error('analyzePhoto failed:', err);
+    return { ok: false, reason: 'fetch-error' };
+  }
 }
 
 async function parseIngredientList(rows) {
@@ -1719,6 +1812,17 @@ function refreshEstimateHint() {
     'One ingredient per row. Add more with "+ Add another ingredient", then tap Calculate.',
     'Add your Spoonacular key below (in Recipe ideas) to compute calories per gram.',
   );
+  // Photo button: only enable if we have a key AND a file is selected
+  const hasKey = !!store.get(KEYS.spoonacularKey, null);
+  const hasFile = !!$('#photo-input')?.files?.[0];
+  const photoBtn = $('#btn-analyze-photo');
+  if (photoBtn) photoBtn.disabled = !hasKey || !hasFile;
+  const photoHint = $('#photo-hint');
+  if (photoHint) {
+    photoHint.textContent = hasKey
+      ? 'Take a photo, tap Analyze. Spoonacular guesses the dish + estimates calories. Best on classic dishes; can be off on French specialities.'
+      : 'Add your Spoonacular key below (in Recipe ideas) to enable photo analysis.';
+  }
 }
 
 function recipeCardHtml(r) {
@@ -1858,6 +1962,88 @@ function bindDashboardScreen() {
     });
   });
 
+  // Photo: open file picker
+  $('#photo-pick').addEventListener('click', () => $('#photo-input').click());
+
+  // Photo: handle file selection -> preview
+  $('#photo-input').addEventListener('change', (ev) => {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast('Please pick an image', 'error');
+      ev.target.value = '';
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast('Image is too large (max 8 MB)', 'error');
+      ev.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      $('#photo-preview').src = e.target.result;
+      $('#photo-preview-wrap').hidden = false;
+    };
+    reader.readAsDataURL(file);
+    $('#btn-analyze-photo').disabled = false;
+    $('#photo-pick-label').textContent = 'Change photo';
+  });
+
+  // Photo: clear button
+  $('#photo-clear').addEventListener('click', () => {
+    $('#photo-input').value = '';
+    $('#photo-preview').src = '';
+    $('#photo-preview-wrap').hidden = true;
+    $('#btn-analyze-photo').disabled = true;
+    $('#photo-pick-label').textContent = 'Take or pick a photo';
+    $('#photo-name').value = '';
+  });
+
+  // Photo: analyze button
+  $('#btn-analyze-photo').addEventListener('click', async () => {
+    const file = $('#photo-input').files?.[0];
+    if (!file) {
+      toast('Pick a photo first', 'error');
+      return;
+    }
+    const btn = $('#btn-analyze-photo');
+    const span = btn.querySelector('span');
+    const originalLabel = span.textContent;
+    btn.disabled = true; btn.classList.add('loading'); span.textContent = 'Analyzing…';
+
+    const result = await analyzePhotoFile(file);
+
+    btn.disabled = false; btn.classList.remove('loading'); span.textContent = originalLabel;
+
+    if (!result.ok) {
+      const msgs = {
+        'no-key':      'Add your Spoonacular key (in the Recipes section) to enable photo analysis.',
+        'no-input':    'Pick a photo first.',
+        'bad-key':     'Spoonacular says your key is invalid. Update it in the Recipes section.',
+        'no-match':    result.category
+          ? `Recognised it as "${result.category}" but no nutrition was returned. Try a clearer photo or use the other modes.`
+          : 'Could not recognise the dish. Spoonacular works best on classic anglo dishes; try Whole dish or By gram instead.',
+        'fetch-error': 'Could not analyse the photo. Possibly a network or CORS issue. Try Whole dish or By gram instead.',
+      };
+      toast(msgs[result.reason] || 'Could not analyse', 'error');
+      if (result.reason === 'no-key') $('#key-input')?.focus();
+      return;
+    }
+
+    const f = $('#meal-form');
+    f.elements.calories.value = result.calories;
+    f.elements.proteinG.value = result.protein || '';
+    f.elements.carbsG.value   = result.carbs   || '';
+    f.elements.fatG.value     = result.fat     || '';
+    $('#photo-name').value = result.category;
+    if (!$('#macros-extra').classList.contains('open')) {
+      $('#macros-extra').classList.add('open');
+      $('#toggle-macros').textContent = '− Hide macros';
+    }
+    const conf = Math.round((result.probability ?? 0) * 100);
+    toast(`Detected: ${result.category} (${conf}% sure) · ${result.calories} kcal`, 'success');
+  });
+
   // Add another ingredient row
   $('#gram-add-row').addEventListener('click', () => {
     const row = buildGramRow();
@@ -1981,6 +2167,9 @@ function bindDashboardScreen() {
       const missingAmount = filled.find(r => !r.amount || r.amount <= 0);
       if (missingAmount) { toast(`Enter a weight in grams for "${missingAmount.name}"`, 'error'); return; }
       name = filled.map(r => `${r.amount}g ${r.name}`).join(' + ');
+    } else if (mode === 'photo') {
+      name = $('#photo-name').value.trim();
+      if (!name) { toast('Tap Analyze first or type what it is', 'error'); $('#photo-name').focus(); return; }
     } else {
       name = String(fd.get('name') || '').trim();
     }
@@ -1998,6 +2187,13 @@ function bindDashboardScreen() {
     });
     ev.currentTarget.reset();
     resetGramRows();
+    // Photo mode reset
+    $('#photo-input').value = '';
+    $('#photo-preview').src = '';
+    $('#photo-preview-wrap').hidden = true;
+    $('#btn-analyze-photo').disabled = true;
+    $('#photo-pick-label').textContent = 'Take or pick a photo';
+    $('#photo-name').value = '';
     $('#macros-extra').classList.remove('open');
     $('#toggle-macros').textContent = '+ Add macros (optional)';
     toast('Meal added', 'success');
